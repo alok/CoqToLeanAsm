@@ -1,0 +1,10 @@
+name = "CoqToLeanAsm"
+version = "0.1.0"
+defaultTargets = ["coqtoleanasm"]
+
+[[lean_lib]]
+name = "CoqToLeanAsm"
+
+[[lean_exe]]
+name = "coqtoleanasm"
+root = "Main"
