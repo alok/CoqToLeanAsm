@@ -2,9 +2,27 @@ name = "CoqToLeanAsm"
 version = "0.1.0"
 defaultTargets = ["coqtoleanasm"]
 
+[leanOptions]
+pp.unicode.fun = true
+autoImplicit = true
+relaxedAutoImplicit = false
+
 [[lean_lib]]
 name = "CoqToLeanAsm"
 
 [[lean_exe]]
 name = "coqtoleanasm"
 root = "Main"
+
+# Verso documentation (uncomment when verso build is fixed)
+# [[require]]
+# name = "verso"
+# git = "https://github.com/leanprover/verso"
+# rev = "v4.26.0-rc2"
+#
+# [[lean_lib]]
+# name = "X86Docs"
+#
+# [[lean_exe]]
+# name = "x86docs"
+# root = "X86DocsMain"
