@@ -10,27 +10,34 @@
 
 namespace X86
 
--- Standard bit widths used in x86
+/-- 4-bit nibble (half byte) -/
 abbrev Nibble := BitVec 4
+/-- 8-bit byte -/
 abbrev Byte := BitVec 8
+/-- 16-bit word -/
 abbrev Word := BitVec 16
+/-- 32-bit double word -/
 abbrev DWord := BitVec 32
+/-- 64-bit quad word -/
 abbrev QWord := BitVec 64
 
--- Operation sizes (matches x86 operand size encoding)
+/-- x86 operand sizes, matching the encoding used in ModR/M bytes -/
 inductive OpSize where
-  | Op8  : OpSize  -- 1 byte
-  | Op16 : OpSize  -- 2 bytes (WORD)
-  | Op32 : OpSize  -- 4 bytes (DWORD)
+  /-- 8-bit operand (1 byte) -/
+  | Op8  : OpSize
+  /-- 16-bit operand (WORD) -/
+  | Op16 : OpSize
+  /-- 32-bit operand (DWORD) -/
+  | Op32 : OpSize
 deriving Repr, DecidableEq, Inhabited
 
--- Map OpSize to bit width
+/-- Map OpSize to bit width -/
 def OpSize.bits : OpSize → Nat
   | Op8  => 8
   | Op16 => 16
   | Op32 => 32
 
--- Variable-width word type indexed by operation size
+/-- Variable-width word type indexed by operation size -/
 abbrev VWord (s : OpSize) := BitVec s.bits
 
 -- Coercions for convenience
@@ -38,42 +45,49 @@ instance : Coe (BitVec 8) Byte := ⟨id⟩
 instance : Coe (BitVec 16) Word := ⟨id⟩
 instance : Coe (BitVec 32) DWord := ⟨id⟩
 
--- Byte extraction from larger words
+/-- Extract a byte from a DWord at the given index (0 = LSB) -/
 def DWord.toByte (d : DWord) (idx : Fin 4) : Byte :=
   (d >>> (idx.val * 8)).truncate 8
 
+/-- Construct a DWord from 4 bytes (b0 = LSB) -/
 def DWord.fromBytes (b0 b1 b2 b3 : Byte) : DWord :=
   b0.zeroExtend 32 |||
   (b1.zeroExtend 32 <<< 8) |||
   (b2.zeroExtend 32 <<< 16) |||
   (b3.zeroExtend 32 <<< 24)
 
+/-- Extract a byte from a Word at the given index (0 = LSB) -/
 def Word.toByte (w : Word) (idx : Fin 2) : Byte :=
   (w >>> (idx.val * 8)).truncate 8
 
+/-- Construct a Word from 2 bytes (b0 = LSB) -/
 def Word.fromBytes (b0 b1 : Byte) : Word :=
   b0.zeroExtend 16 ||| (b1.zeroExtend 16 <<< 8)
 
--- Sign extension
+/-- Sign-extend a byte to a 16-bit word -/
 def Byte.signExtendToWord (b : Byte) : Word :=
   b.signExtend 16
 
+/-- Sign-extend a byte to a 32-bit double word -/
 def Byte.signExtendToDWord (b : Byte) : DWord :=
   b.signExtend 32
 
+/-- Sign-extend a 16-bit word to a 32-bit double word -/
 def Word.signExtendToDWord (w : Word) : DWord :=
   w.signExtend 32
 
--- Hex string conversion
+/-- Convert a nibble (0-15) to its hex character ('0'-'F') -/
 def Byte.toHexChar (n : Fin 16) : Char :=
   if n.val < 10 then Char.ofNat (0x30 + n.val)
   else Char.ofNat (0x41 + n.val - 10)
 
+/-- Convert a byte to a 2-character hex string -/
 def Byte.toHex (b : Byte) : String :=
   let hi := Byte.toHexChar ⟨(b.toNat / 16) % 16, by omega⟩
   let lo := Byte.toHexChar ⟨b.toNat % 16, by omega⟩
   String.mk [hi, lo]
 
+/-- Convert a DWord to an 8-character hex string (big-endian display) -/
 def DWord.toHex (d : DWord) : String :=
   String.join [
     (d.toByte ⟨3, by omega⟩).toHex,
@@ -82,13 +96,14 @@ def DWord.toHex (d : DWord) : String :=
     (d.toByte ⟨0, by omega⟩).toHex
   ]
 
--- Hex parsing
+/-- Parse a hex digit character to its numeric value -/
 def Char.hexDigitToNat? (c : Char) : Option Nat :=
   if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
   else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
   else if 'A' ≤ c ∧ c ≤ 'F' then some (c.toNat - 'A'.toNat + 10)
   else none
 
+/-- Parse a 2-character hex string to a byte -/
 def Byte.fromHex? (s : String) : Option Byte := do
   guard (s.length == 2)
   let chars := s.toList
@@ -96,22 +111,24 @@ def Byte.fromHex? (s : String) : Option Byte := do
   let lo ← chars[1]? >>= Char.hexDigitToNat?
   return BitVec.ofNat 8 (hi * 16 + lo)
 
--- Bit manipulation
+/-- Get the bit at position i in a bit vector -/
 def getBit (b : BitVec n) (i : Nat) : Bool :=
   (b >>> i &&& 1) != 0
 
+/-- Set or clear the bit at position i in a bit vector -/
 def setBit (b : BitVec n) (i : Nat) (v : Bool) : BitVec n :=
   if v then b ||| (1 <<< i)
   else b &&& ~~~((1 : BitVec n) <<< i)
 
--- MSB and LSB
+/-- Get the most significant bit -/
 def msb (b : BitVec n) : Bool := getBit b (n - 1)
+/-- Get the least significant bit -/
 def lsb (b : BitVec n) : Bool := getBit b 0
 
--- Concatenation notation
+/-- Bit vector concatenation: appends second argument to the right of first -/
 infixl:65 " ## " => BitVec.append
 
--- Pretty printing for byte sequences
+/-- Convert a list of bytes to a space-separated hex string -/
 def bytesToHexString (bs : List Byte) : String :=
   " ".intercalate (bs.map Byte.toHex)
 

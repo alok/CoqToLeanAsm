@@ -14,43 +14,86 @@ import CoqToLeanAsm.Bits
 
 namespace X86
 
--- General purpose registers (excluding ESP for some addressing modes)
+/-- General purpose registers excluding ESP (used in SIB index addressing) -/
 inductive NonSPReg where
-  | EAX | EBX | ECX | EDX | ESI | EDI | EBP
+  /-- Accumulator -/
+  | EAX
+  /-- Base -/
+  | EBX
+  /-- Counter -/
+  | ECX
+  /-- Data -/
+  | EDX
+  /-- Source Index -/
+  | ESI
+  /-- Destination Index -/
+  | EDI
+  /-- Base Pointer -/
+  | EBP
 deriving Repr, DecidableEq, Inhabited
 
--- All general purpose registers (including ESP)
+/-- All 32-bit general purpose registers -/
 inductive Reg where
+  /-- Non-ESP register -/
   | nonSPReg : NonSPReg → Reg
+  /-- Stack Pointer -/
   | ESP : Reg
 deriving Repr, DecidableEq, Inhabited
 
--- Any register including EIP (but not EFLAGS)
+/-- Any register including EIP (instruction pointer) -/
 inductive AnyReg where
+  /-- General purpose register -/
   | reg : Reg → AnyReg
+  /-- Instruction pointer -/
   | EIP : AnyReg
 deriving Repr, DecidableEq, Inhabited
 
--- Segment registers
+/-- x86 segment registers -/
 inductive SegReg where
-  | CS | DS | SS | ES | FS | GS
+  /-- Code Segment -/
+  | CS
+  /-- Data Segment -/
+  | DS
+  /-- Stack Segment -/
+  | SS
+  /-- Extra Segment -/
+  | ES
+  /-- Additional Segment (386+) -/
+  | FS
+  /-- Additional Segment (386+) -/
+  | GS
 deriving Repr, DecidableEq, Inhabited
 
--- 8-bit (byte) registers
+/-- 8-bit byte registers (low/high bytes of AX, BX, CX, DX) -/
 inductive ByteReg where
-  | AL | AH | BL | BH | CL | CH | DL | DH
+  /-- Low byte of AX -/
+  | AL
+  /-- High byte of AX -/
+  | AH
+  /-- Low byte of BX -/
+  | BL
+  /-- High byte of BX -/
+  | BH
+  /-- Low byte of CX -/
+  | CL
+  /-- High byte of CX -/
+  | CH
+  /-- Low byte of DX -/
+  | DL
+  /-- High byte of DX -/
+  | DH
 deriving Repr, DecidableEq, Inhabited
 
--- 16-bit (word) registers - wrapping around Reg
+/-- 16-bit word registers (lower 16 bits of 32-bit registers) -/
 structure WordReg where
+  /-- Underlying 32-bit register -/
   reg : Reg
 deriving Repr, DecidableEq, Inhabited
 
--- Coercions for convenient usage
 instance : Coe NonSPReg Reg := ⟨Reg.nonSPReg⟩
 instance : Coe Reg AnyReg := ⟨AnyReg.reg⟩
 
--- Register encoding to natural numbers (for binary encoding)
+/-- Encode NonSPReg to its 3-bit binary representation -/
 def NonSPReg.toNat : NonSPReg → Nat
   | .EAX => 0
   | .ECX => 1  -- Note: ECX is 1, not EBX!
@@ -60,14 +103,17 @@ def NonSPReg.toNat : NonSPReg → Nat
   | .ESI => 6
   | .EDI => 7
 
+/-- Encode Reg to its 3-bit binary representation -/
 def Reg.toNat : Reg → Nat
   | .nonSPReg r => r.toNat
   | .ESP => 4
 
+/-- Encode AnyReg to natural (EIP = 8, used internally) -/
 def AnyReg.toNat : AnyReg → Nat
   | .reg r => r.toNat
   | .EIP => 8
 
+/-- Encode SegReg to its 3-bit binary representation -/
 def SegReg.toNat : SegReg → Nat
   | .CS => 0
   | .DS => 1
@@ -76,6 +122,7 @@ def SegReg.toNat : SegReg → Nat
   | .FS => 4
   | .GS => 5
 
+/-- Encode ByteReg to its 3-bit binary representation -/
 def ByteReg.toNat : ByteReg → Nat
   | .AL => 0
   | .CL => 1
@@ -86,7 +133,7 @@ def ByteReg.toNat : ByteReg → Nat
   | .DH => 6
   | .BH => 7
 
--- Decode natural to register
+/-- Decode 3-bit encoding to Reg -/
 def Reg.ofNat? : Nat → Option Reg
   | 0 => some (.nonSPReg .EAX)
   | 1 => some (.nonSPReg .ECX)
@@ -98,6 +145,7 @@ def Reg.ofNat? : Nat → Option Reg
   | 7 => some (.nonSPReg .EDI)
   | _ => none
 
+/-- Decode 3-bit encoding to ByteReg -/
 def ByteReg.ofNat? : Nat → Option ByteReg
   | 0 => some .AL
   | 1 => some .CL
@@ -109,24 +157,34 @@ def ByteReg.ofNat? : Nat → Option ByteReg
   | 7 => some .BH
   | _ => none
 
--- Register pieces (for accessing bytes of 32-bit registers)
+/-- Byte index within a 32-bit register (0 = LSB) -/
 inductive RegIx where
-  | Ix0 | Ix1 | Ix2 | Ix3
+  /-- Byte 0 (bits 0-7) -/
+  | Ix0
+  /-- Byte 1 (bits 8-15) -/
+  | Ix1
+  /-- Byte 2 (bits 16-23) -/
+  | Ix2
+  /-- Byte 3 (bits 24-31) -/
+  | Ix3
 deriving Repr, DecidableEq, Inhabited
 
+/-- A piece of a register (register + byte index) -/
 structure RegPiece where
+  /-- The register -/
   reg : AnyReg
+  /-- Which byte -/
   ix : RegIx
 deriving Repr, DecidableEq
 
--- Get a byte from a DWORD based on register index
+/-- Extract a byte from a DWord at the given index -/
 def getRegPiece (v : DWord) : RegIx → Byte
   | .Ix0 => v.toByte ⟨0, by omega⟩
   | .Ix1 => v.toByte ⟨1, by omega⟩
   | .Ix2 => v.toByte ⟨2, by omega⟩
   | .Ix3 => v.toByte ⟨3, by omega⟩
 
--- Put a byte into a DWORD at a register index position
+/-- Insert a byte into a DWord at the given index -/
 def putRegPiece (v : DWord) (ix : RegIx) (b : Byte) : DWord :=
   let mask : DWord := match ix with
     | .Ix0 => 0xFFFFFF00
@@ -140,43 +198,42 @@ def putRegPiece (v : DWord) (ix : RegIx) (b : Byte) : DWord :=
     | .Ix3 => b.zeroExtend 32 <<< 24
   (v &&& mask) ||| shifted
 
--- Variable-width register type indexed by OpSize
+/-- Variable-width register type indexed by operand size -/
 def VReg : OpSize → Type
   | .Op8  => ByteReg
   | .Op16 => WordReg
   | .Op32 => Reg
 
--- Variable-width register including EIP for 32-bit
+/-- Variable-width register including EIP for 32-bit -/
 def VRegAny : OpSize → Type
   | .Op8  => ByteReg
   | .Op16 => WordReg
   | .Op32 => AnyReg
 
--- Coercions for VReg
 instance : Coe Reg (VReg .Op32) := ⟨id⟩
 instance : Coe WordReg (VReg .Op16) := ⟨id⟩
 instance : Coe ByteReg (VReg .Op8) := ⟨id⟩
 instance : Coe AnyReg (VRegAny .Op32) := ⟨id⟩
 
--- Convert VReg to VRegAny
+/-- Convert VReg to VRegAny (widens to include EIP for 32-bit) -/
 def VReg.toVRegAny : {s : OpSize} → VReg s → VRegAny s
   | .Op8, r => r
   | .Op16, r => r
   | .Op32, r => AnyReg.reg r
 
--- Get the base 32-bit register for an 8-bit register
+/-- Get the base 32-bit register for an 8-bit register -/
 def ByteReg.toReg : ByteReg → Reg
   | .AL | .AH => .nonSPReg .EAX
   | .BL | .BH => .nonSPReg .EBX
   | .CL | .CH => .nonSPReg .ECX
   | .DL | .DH => .nonSPReg .EDX
 
--- Check if a byte register accesses the high byte
+/-- Check if a byte register accesses the high byte (AH, BH, CH, DH) -/
 def ByteReg.isHigh : ByteReg → Bool
   | .AH | .BH | .CH | .DH => true
   | _ => false
 
--- Get the register piece for a byte register
+/-- Get the register piece (register + byte index) for a byte register -/
 def ByteReg.toRegPiece : ByteReg → RegPiece
   | .AL => ⟨.reg (.nonSPReg .EAX), .Ix0⟩
   | .AH => ⟨.reg (.nonSPReg .EAX), .Ix1⟩
@@ -187,39 +244,69 @@ def ByteReg.toRegPiece : ByteReg → RegPiece
   | .DL => ⟨.reg (.nonSPReg .EDX), .Ix0⟩
   | .DH => ⟨.reg (.nonSPReg .EDX), .Ix1⟩
 
--- Convenient names for registers (for use in assembly syntax)
+-- Register abbreviations for assembly syntax
+/-- Accumulator register -/
 abbrev EAX : Reg := .nonSPReg .EAX
+/-- Base register -/
 abbrev EBX : Reg := .nonSPReg .EBX
+/-- Counter register -/
 abbrev ECX : Reg := .nonSPReg .ECX
+/-- Data register -/
 abbrev EDX : Reg := .nonSPReg .EDX
+/-- Source index register -/
 abbrev ESI : Reg := .nonSPReg .ESI
+/-- Destination index register -/
 abbrev EDI : Reg := .nonSPReg .EDI
+/-- Base pointer register -/
 abbrev EBP : Reg := .nonSPReg .EBP
+/-- Stack pointer register -/
 abbrev ESP : Reg := .ESP
 
+/-- 16-bit accumulator -/
 abbrev AX : WordReg := ⟨EAX⟩
+/-- 16-bit base -/
 abbrev BX : WordReg := ⟨EBX⟩
+/-- 16-bit counter -/
 abbrev CX : WordReg := ⟨ECX⟩
+/-- 16-bit data -/
 abbrev DX : WordReg := ⟨EDX⟩
+/-- 16-bit source index -/
 abbrev SI : WordReg := ⟨ESI⟩
+/-- 16-bit destination index -/
 abbrev DI : WordReg := ⟨EDI⟩
+/-- 16-bit base pointer -/
 abbrev BP : WordReg := ⟨EBP⟩
+/-- 16-bit stack pointer -/
 abbrev SP : WordReg := ⟨ESP⟩
 
+/-- Low byte of AX -/
 abbrev AL : ByteReg := .AL
+/-- High byte of AX -/
 abbrev AH : ByteReg := .AH
+/-- Low byte of BX -/
 abbrev BL : ByteReg := .BL
+/-- High byte of BX -/
 abbrev BH : ByteReg := .BH
+/-- Low byte of CX -/
 abbrev CL : ByteReg := .CL
+/-- High byte of CX -/
 abbrev CH : ByteReg := .CH
+/-- Low byte of DX -/
 abbrev DL : ByteReg := .DL
+/-- High byte of DX -/
 abbrev DH : ByteReg := .DH
 
+/-- Code segment -/
 abbrev CS : SegReg := .CS
+/-- Data segment -/
 abbrev DS : SegReg := .DS
+/-- Stack segment -/
 abbrev SS : SegReg := .SS
+/-- Extra segment -/
 abbrev ES : SegReg := .ES
+/-- Additional segment -/
 abbrev FS : SegReg := .FS
+/-- Additional segment -/
 abbrev GS : SegReg := .GS
 
 -- Theorems about register encoding

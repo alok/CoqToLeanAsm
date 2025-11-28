@@ -11,106 +11,157 @@ import CoqToLeanAsm.Reg
 
 namespace X86
 
--- Scale factors for SIB addressing
+/-- Scale factors for SIB (Scale-Index-Base) addressing: $index \times scale$ -/
 inductive Scale where
-  | S1 | S2 | S4 | S8
+  /-- Scale factor 1 -/
+  | S1
+  /-- Scale factor 2 -/
+  | S2
+  /-- Scale factor 4 -/
+  | S4
+  /-- Scale factor 8 -/
+  | S8
 deriving Repr, DecidableEq, Inhabited
 
+/-- Convert scale to its numeric value -/
 def Scale.toNat : Scale → Nat
   | .S1 => 1
   | .S2 => 2
   | .S4 => 4
   | .S8 => 8
 
+/-- Convert scale to shift amount (log₂) -/
 def Scale.toShift : Scale → Nat
   | .S1 => 0
   | .S2 => 1
   | .S4 => 2
   | .S8 => 3
 
--- Memory specification: [base + index*scale + offset]
--- base is optional VReg, index is optional NonSPReg with Scale
+/-- Memory operand specification: base + index×scale + offset -/
 structure MemSpec where
-  base   : Option Reg           -- Base register (optional)
-  index  : Option (NonSPReg × Scale)  -- Index register with scale
-  offset : DWord                -- Displacement
+  /-- Optional base register -/
+  base   : Option Reg
+  /-- Optional scaled index register (cannot be ESP) -/
+  index  : Option (NonSPReg × Scale)
+  /-- Displacement/offset value -/
+  offset : DWord
 deriving Repr, DecidableEq, Inhabited
 
--- Shorthand constructors for MemSpec
+/-- Displacement-only addressing -/
 def MemSpec.disp (d : DWord) : MemSpec := ⟨none, none, d⟩
+/-- Register-indirect addressing -/
 def MemSpec.reg (r : Reg) : MemSpec := ⟨some r, none, 0⟩
+/-- Register + displacement addressing -/
 def MemSpec.regDisp (r : Reg) (d : DWord) : MemSpec := ⟨some r, none, d⟩
+/-- Scaled index addressing: base + index×scale -/
 def MemSpec.regIdx (r : Reg) (i : NonSPReg) (s : Scale) : MemSpec := ⟨some r, some (i, s), 0⟩
+/-- Full SIB addressing: base + index×scale + disp -/
 def MemSpec.regIdxDisp (r : Reg) (i : NonSPReg) (s : Scale) (d : DWord) : MemSpec :=
   ⟨some r, some (i, s), d⟩
 
--- Register or Memory operand
+/-- Operand that is either a register or memory location -/
 inductive RegMem (s : OpSize) where
+  /-- Register operand -/
   | R : VReg s → RegMem s
+  /-- Memory operand -/
   | M : MemSpec → RegMem s
 
--- Register or Immediate operand
+/-- Operand that is either a register or immediate value -/
 inductive RegImm (s : OpSize) where
+  /-- Immediate value -/
   | I : VWord s → RegImm s
+  /-- Register operand -/
   | R : VReg s → RegImm s
 
--- Source operand (32-bit)
+/-- Source operand for 32-bit operations -/
 inductive Src where
-  | I : DWord → Src      -- Immediate
-  | M : MemSpec → Src    -- Memory
-  | R : Reg → Src        -- Register
+  /-- Immediate 32-bit value -/
+  | I : DWord → Src
+  /-- Memory location -/
+  | M : MemSpec → Src
+  /-- Register -/
+  | R : Reg → Src
 deriving Repr
 
 instance : Coe DWord Src := ⟨.I⟩
 instance : Coe MemSpec Src := ⟨.M⟩
 instance : Coe Reg Src := ⟨.R⟩
 
--- Destination-Source pairs for binary operations
+/-- Destination-source pair for binary operations -/
 inductive DstSrc (s : OpSize) where
-  | RR : VReg s → VReg s → DstSrc s       -- reg, reg
-  | RM : VReg s → MemSpec → DstSrc s      -- reg, [mem]
-  | MR : MemSpec → VReg s → DstSrc s      -- [mem], reg
-  | RI : VReg s → VWord s → DstSrc s      -- reg, imm
-  | MI : MemSpec → VWord s → DstSrc s     -- [mem], imm
+  /-- Register to register -/
+  | RR : VReg s → VReg s → DstSrc s
+  /-- Register from memory -/
+  | RM : VReg s → MemSpec → DstSrc s
+  /-- Memory from register -/
+  | MR : MemSpec → VReg s → DstSrc s
+  /-- Register with immediate -/
+  | RI : VReg s → VWord s → DstSrc s
+  /-- Memory with immediate -/
+  | MI : MemSpec → VWord s → DstSrc s
 
--- Jump target (for relative jumps)
+/-- Jump target address (for relative jumps) -/
 structure Tgt where
+  /-- Target address -/
   addr : DWord
 deriving Repr, DecidableEq, Inhabited
 
 instance : Coe DWord Tgt := ⟨Tgt.mk⟩
 
--- Jump target (immediate, memory, or register)
+/-- Jump target: immediate address, memory indirect, or register indirect -/
 inductive JmpTgt where
-  | I : Tgt → JmpTgt       -- Immediate (relative)
-  | M : MemSpec → JmpTgt   -- Memory indirect
-  | R : Reg → JmpTgt       -- Register indirect
+  /-- Direct/relative jump to address -/
+  | I : Tgt → JmpTgt
+  /-- Indirect jump through memory -/
+  | M : MemSpec → JmpTgt
+  /-- Indirect jump through register -/
+  | R : Reg → JmpTgt
 deriving Repr
 
 instance : Coe Tgt JmpTgt := ⟨.I⟩
 instance : Coe Reg JmpTgt := ⟨.R⟩
 
--- Shift count (CL register or immediate byte)
+/-- Shift/rotate count: CL register or immediate byte -/
 inductive ShiftCount where
-  | CL : ShiftCount         -- Use CL register
-  | I : Byte → ShiftCount   -- Immediate count
+  /-- Use CL register as count -/
+  | CL : ShiftCount
+  /-- Immediate count value -/
+  | I : Byte → ShiftCount
 deriving Repr, DecidableEq, Inhabited
 
 instance : Coe Byte ShiftCount := ⟨.I⟩
 
--- I/O port
+/-- I/O port specification -/
 inductive Port where
-  | I : Byte → Port   -- Immediate port number
-  | DX : Port         -- Use DX register
+  /-- Immediate 8-bit port number -/
+  | I : Byte → Port
+  /-- Use DX register as port number -/
+  | DX : Port
 deriving Repr, DecidableEq, Inhabited
 
 instance : Coe Byte Port := ⟨.I⟩
 
--- Binary ALU operations
+/-- Binary ALU operations -/
 inductive BinOp where
-  | ADC | ADD | AND | CMP | OR | SBB | SUB | XOR
+  /-- Add with carry -/
+  | ADC
+  /-- Add -/
+  | ADD
+  /-- Bitwise AND -/
+  | AND
+  /-- Compare (subtract without storing) -/
+  | CMP
+  /-- Bitwise OR -/
+  | OR
+  /-- Subtract with borrow -/
+  | SBB
+  /-- Subtract -/
+  | SUB
+  /-- Bitwise XOR -/
+  | XOR
 deriving Repr, DecidableEq, Inhabited
 
+/-- Encode binary operation to 3-bit opcode extension -/
 def BinOp.toNat : BinOp → Nat
   | .ADD => 0
   | .OR  => 1
@@ -121,21 +172,51 @@ def BinOp.toNat : BinOp → Nat
   | .XOR => 6
   | .CMP => 7
 
--- Unary operations
+/-- Unary ALU operations -/
 inductive UnaryOp where
-  | INC | DEC | NOT | NEG
+  /-- Increment by 1 -/
+  | INC
+  /-- Decrement by 1 -/
+  | DEC
+  /-- Bitwise NOT (one's complement) -/
+  | NOT
+  /-- Arithmetic negation (two's complement) -/
+  | NEG
 deriving Repr, DecidableEq, Inhabited
 
--- Bit operations
+/-- Bit test operations -/
 inductive BitOp where
-  | BT | BTC | BTR | BTS
+  /-- Bit test -/
+  | BT
+  /-- Bit test and complement -/
+  | BTC
+  /-- Bit test and reset -/
+  | BTR
+  /-- Bit test and set -/
+  | BTS
 deriving Repr, DecidableEq, Inhabited
 
--- Shift/rotate operations
+/-- Shift and rotate operations -/
 inductive ShiftOp where
-  | ROL | ROR | RCL | RCR | SHL | SHR | SAL | SAR
+  /-- Rotate left -/
+  | ROL
+  /-- Rotate right -/
+  | ROR
+  /-- Rotate left through carry -/
+  | RCL
+  /-- Rotate right through carry -/
+  | RCR
+  /-- Shift left (multiply by 2) -/
+  | SHL
+  /-- Shift right (unsigned divide by 2) -/
+  | SHR
+  /-- Shift arithmetic left (same as SHL) -/
+  | SAL
+  /-- Shift arithmetic right (signed divide by 2) -/
+  | SAR
 deriving Repr, DecidableEq, Inhabited
 
+/-- Encode shift operation to 3-bit opcode extension -/
 def ShiftOp.toNat : ShiftOp → Nat
   | .ROL => 0
   | .ROR => 1
@@ -146,18 +227,27 @@ def ShiftOp.toNat : ShiftOp → Nat
   | .SAL => 4  -- Same as SHL
   | .SAR => 7
 
--- Condition codes (for conditional jumps and SETcc)
+/-- Condition codes for conditional jumps and SETcc -/
 inductive Condition where
-  | O    -- Overflow
-  | B    -- Below (unsigned), Carry
-  | Z    -- Zero, Equal
-  | BE   -- Below or Equal (unsigned)
-  | S    -- Sign (negative)
-  | P    -- Parity even
-  | L    -- Less (signed)
-  | LE   -- Less or Equal (signed)
+  /-- Overflow (OF=1) -/
+  | O
+  /-- Below/Carry (CF=1, unsigned) -/
+  | B
+  /-- Zero/Equal (ZF=1) -/
+  | Z
+  /-- Below or Equal (CF=1 or ZF=1, unsigned) -/
+  | BE
+  /-- Sign/Negative (SF=1) -/
+  | S
+  /-- Parity Even (PF=1) -/
+  | P
+  /-- Less (SF≠OF, signed) -/
+  | L
+  /-- Less or Equal (ZF=1 or SF≠OF, signed) -/
+  | LE
 deriving Repr, DecidableEq, Inhabited
 
+/-- Encode condition to 4-bit condition code -/
 def Condition.toNat : Condition → Nat
   | .O  => 0
   | .B  => 2
@@ -168,8 +258,8 @@ def Condition.toNat : Condition → Nat
   | .L  => 12
   | .LE => 14
 
--- Condition with value (true = condition, false = negated condition)
--- E.g., (Z, true) = JZ, (Z, false) = JNZ
+/-- Condition with polarity: (condition, true) tests condition,
+(condition, false) tests negated condition -/
 abbrev ConditionValue := Condition × Bool
 
 -- Aliases for common conditions
