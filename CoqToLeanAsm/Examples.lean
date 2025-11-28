@@ -215,4 +215,100 @@ end Verification
 -- Run tests
 -- #eval exampleBytes
 
+-- ============================================================================
+-- Simple x86 Interpreter for Demonstration
+-- ============================================================================
+
+/-- Compute factorial n! -/
+def factorial : Nat → Nat
+  | 0 => 1
+  | n+1 => (n+1) * factorial n
+
+/-- Compute factorial by interpreting x86-style loop -/
+def factorialInterpreted (n : Nat) : Nat :=
+  -- Simulates: MOV EAX, 1; loop: TEST ECX,ECX; JZ done; IMUL EAX,ECX; DEC ECX; JMP loop
+  let rec loop (eax ecx : Nat) (fuel : Nat) : Nat :=
+    match fuel with
+    | 0 => eax
+    | f+1 => if ecx == 0 then eax else loop (eax * ecx) (ecx - 1) f
+  loop 1 n 100
+
+-- Demonstrate factorial works!
+#eval factorialInterpreted 5   -- 120
+#eval factorialInterpreted 6   -- 720
+#eval factorialInterpreted 10  -- 3628800
+
+-- Verify correctness
+#eval (List.range 11).map fun n => (n, factorialInterpreted n, factorial n)
+
+-- ============================================================================
+-- Using x86! Macro - Write assembly like a .s file!
+-- ============================================================================
+
+-- Define register arguments for the macro
+def r_eax : InstrArg := .Reg32 EAX
+def r_ebx : InstrArg := .Reg32 EBX
+def r_ecx : InstrArg := .Reg32 ECX
+def r_edx : InstrArg := .Reg32 EDX
+def r_esi : InstrArg := .Reg32 ESI
+def r_edi : InstrArg := .Reg32 EDI
+def r_ebp : InstrArg := .Reg32 EBP
+def r_esp : InstrArg := .Reg32 ESP
+
+-- Define immediate helper
+def imm (n : Nat) : InstrArg := .Imm32 (BitVec.ofNat 32 n)
+
+-- Factorial loop body with x86! macro (without labels)
+def factorialLoopX86 : Program := x86! {
+  mov r_eax, (imm 1)
+  test r_ecx, r_ecx
+  imul r_eax, r_ecx
+  dec r_ecx
+}
+
+-- Simple NOP sled with x86! macro
+def nopSled : Program := x86! {
+  nop
+  nop
+  nop
+  ret
+}
+
+#eval nopSled.length  -- 4 items
+
+-- Register clearing idiom
+def clearRegs : Program := x86! {
+  xor r_eax, r_eax
+  xor r_ebx, r_ebx
+  xor r_ecx, r_ecx
+  xor r_edx, r_edx
+}
+
+-- Stack operations
+def pushAllRegs : Program := x86! {
+  push r_eax
+  push r_ebx
+  push r_ecx
+  push r_edx
+}
+
+def popAllRegs : Program := x86! {
+  pop r_edx
+  pop r_ecx
+  pop r_ebx
+  pop r_eax
+}
+
+-- Print program items
+#eval do
+  IO.println s!"factorialLoopX86 has {factorialLoopX86.length} items"
+  IO.println s!"nopSled has {nopSled.length} items"
+  IO.println s!"clearRegs has {clearRegs.length} items"
+
+-- Compare encoded bytes
+#eval do
+  match assemble 0x1000 nopSled with
+  | .ok bytes => IO.println s!"nopSled bytes: {bytesToHexString bytes}"
+  | .error _ => IO.println "Error assembling nopSled"
+
 end X86.Examples

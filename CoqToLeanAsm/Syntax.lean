@@ -10,6 +10,8 @@ import CoqToLeanAsm.Bits
 import CoqToLeanAsm.Reg
 import CoqToLeanAsm.Instr
 
+set_option linter.missingDocs false
+
 namespace X86
 
 -- Program is a list of instructions with optional labels
@@ -227,5 +229,113 @@ def mkIMUL : InstrArg → InstrArg → Instr
   | .Reg32 r1, .Reg32 r2 => .IMUL r1 (.R r2)
   | .Reg32 r, .Mem m => .IMUL r (.M m)
   | _, _ => .BADINSTR
+
+-- ============================================================================
+-- Intel-style Assembly Syntax: x86! { ... }
+-- ============================================================================
+-- Write assembly that looks like you copied it from a .s file!
+
+declare_syntax_cat asmLine
+
+-- Labels
+syntax ident ":" : asmLine
+
+-- No-operand instructions
+syntax "nop" : asmLine
+syntax "ret" : asmLine
+syntax "hlt" : asmLine
+
+-- One-operand instructions
+syntax "push" term : asmLine
+syntax "pop" term : asmLine
+syntax "inc" term : asmLine
+syntax "dec" term : asmLine
+syntax "not" term : asmLine
+syntax "neg" term : asmLine
+syntax "mul" term : asmLine
+
+-- Two-operand instructions
+syntax "mov" term "," term : asmLine
+syntax "add" term "," term : asmLine
+syntax "sub" term "," term : asmLine
+syntax "and" term "," term : asmLine
+syntax "or" term "," term : asmLine
+syntax "xor" term "," term : asmLine
+syntax "cmp" term "," term : asmLine
+syntax "test" term "," term : asmLine
+syntax "imul" term "," term : asmLine
+syntax "xchg" term "," term : asmLine
+syntax "shl" term "," term : asmLine
+syntax "shr" term "," term : asmLine
+syntax "lea" term "," term : asmLine
+
+-- Jump instructions
+syntax "jmp" term : asmLine
+syntax "call" term : asmLine
+syntax "jz" term : asmLine
+syntax "jnz" term : asmLine
+syntax "je" term : asmLine
+syntax "jne" term : asmLine
+syntax "jl" term : asmLine
+syntax "jge" term : asmLine
+syntax "jle" term : asmLine
+syntax "jg" term : asmLine
+syntax "jb" term : asmLine
+syntax "jae" term : asmLine
+syntax "jbe" term : asmLine
+syntax "ja" term : asmLine
+
+-- Helper syntax to elaborate a single asm line into a term (Program)
+syntax "asm_line%" asmLine : term
+
+-- Elaborate single assembly line via helper
+macro_rules
+  | `(asm_line% $lbl:ident :) => `(Program.label $(Lean.quote lbl.getId.toString))
+  | `(asm_line% nop) => `(Program.instr Instr.NOP)
+  | `(asm_line% ret) => `(Program.instr (Instr.RETOP 0))
+  | `(asm_line% hlt) => `(Program.instr Instr.HLT)
+  | `(asm_line% push $e) => `(Program.instr (mkPUSH $e))
+  | `(asm_line% pop $e) => `(Program.instr (mkPOP $e))
+  | `(asm_line% inc $e) => `(Program.instr (mkINC $e))
+  | `(asm_line% dec $e) => `(Program.instr (mkDEC $e))
+  | `(asm_line% not $e) => `(Program.instr (mkNOT $e))
+  | `(asm_line% neg $e) => `(Program.instr (mkNEG $e))
+  | `(asm_line% mul $e) => `(Program.instr (mkMUL $e))
+  | `(asm_line% mov $dst, $src) => `(Program.instr (mkMOV $dst $src))
+  | `(asm_line% add $dst, $src) => `(Program.instr (mkADD $dst $src))
+  | `(asm_line% sub $dst, $src) => `(Program.instr (mkSUB $dst $src))
+  | `(asm_line% and $dst, $src) => `(Program.instr (mkAND $dst $src))
+  | `(asm_line% or $dst, $src) => `(Program.instr (mkOR $dst $src))
+  | `(asm_line% xor $dst, $src) => `(Program.instr (mkXOR $dst $src))
+  | `(asm_line% cmp $dst, $src) => `(Program.instr (mkCMP $dst $src))
+  | `(asm_line% test $dst, $src) => `(Program.instr (mkTEST $dst $src))
+  | `(asm_line% imul $dst, $src) => `(Program.instr (mkIMUL $dst $src))
+  | `(asm_line% xchg $dst, $src) => `(Program.instr (mkXCHG $dst $src))
+  | `(asm_line% shl $dst, $src) => `(Program.instr (mkSHL $dst $src))
+  | `(asm_line% shr $dst, $src) => `(Program.instr (mkSHR $dst $src))
+  | `(asm_line% lea $dst, $src) => `(Program.instr (mkLEA $dst $src))
+  | `(asm_line% jmp $tgt) => `(Program.instr (mkJMP $tgt))
+  | `(asm_line% call $tgt) => `(Program.instr (mkCALL $tgt))
+  | `(asm_line% jz $tgt) => `(Program.instr (mkJCC Condition.Z true $tgt))
+  | `(asm_line% jnz $tgt) => `(Program.instr (mkJCC Condition.Z false $tgt))
+  | `(asm_line% je $tgt) => `(Program.instr (mkJCC Condition.Z true $tgt))
+  | `(asm_line% jne $tgt) => `(Program.instr (mkJCC Condition.Z false $tgt))
+  | `(asm_line% jl $tgt) => `(Program.instr (mkJCC Condition.L true $tgt))
+  | `(asm_line% jge $tgt) => `(Program.instr (mkJCC Condition.L false $tgt))
+  | `(asm_line% jle $tgt) => `(Program.instr (mkJCC Condition.LE true $tgt))
+  | `(asm_line% jg $tgt) => `(Program.instr (mkJCC Condition.LE false $tgt))
+  | `(asm_line% jb $tgt) => `(Program.instr (mkJCC Condition.B true $tgt))
+  | `(asm_line% jae $tgt) => `(Program.instr (mkJCC Condition.B false $tgt))
+  | `(asm_line% jbe $tgt) => `(Program.instr (mkJCC Condition.BE true $tgt))
+  | `(asm_line% ja $tgt) => `(Program.instr (mkJCC Condition.BE false $tgt))
+
+-- Assembly block: write x86 like a .s file!
+syntax "x86!" "{" asmLine* "}" : term
+
+-- Elaborate assembly block into a Program
+macro_rules
+  | `(x86! { }) => `(Program.empty)
+  | `(x86! { $line:asmLine }) => `(asm_line% $line)
+  | `(x86! { $line:asmLine $lines:asmLine* }) => `(asm_line% $line ++ x86! { $lines* })
 
 end X86

@@ -245,7 +245,8 @@ def proc (name : String) (localBytes : Nat := 0) (body : ProgBuilder Unit) : Pro
   procEpilogue
 
 -- Call a procedure (by label, resolved later)
-def call (target : String) : ProgBuilder Unit :=
+-- Note: Named callProc to avoid conflict with x86! syntax keyword
+def callProc (target : String) : ProgBuilder Unit :=
   ProgBuilder.emit (.CALLrel (.I ⟨0⟩))
 
 -- Stack operations with expressions
