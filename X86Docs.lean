@@ -79,6 +79,117 @@ The assembler uses dependent types to ensure correctness:
 4. *Compositional assembly*: Programs are built from instruction sequences using
    {lean}`ProgBuilder`, which handles label allocation and forward reference resolution.
 
+# Applications from the Original Paper
+
+The original PPDP 2013 paper demonstrated several compelling applications that
+showcase the power of embedding an assembler in a proof assistant. This port
+preserves the core architecture while adapting it to Lean 4.
+
+## Factorial with Printf (Paper Figure 1)
+
+The paper's opening example computes factorials of 10 and 12, printing results
+via an external `printf` function. This demonstrates:
+
+- *Procedure macros*: `letproc` for locally-scoped procedure definitions
+- *Calling conventions*: `call_cdecl3` expands to push arguments and clean stack
+- *While loops*: `while (CMP ECX, EBX) CC_LE true (...)` for structured control
+- *Inline data*: `ds "Factorial of %d is %d"` for string constants
+
+The assembled code runs directly on Windows after `makePEfile` generates a PE executable.
+
+## Game of Life on Bare Metal (Paper Figure 2)
+
+The paper shows Conway's Game of Life running on bare hardware—no operating system.
+By appending a boot loader and creating a CD image, the Coq-assembled code boots
+directly in a virtual machine. This demonstrates that the assembler produces
+*real, executable machine code*, not just a model.
+
+## Portable Executable Generation
+
+The `makePEfile` function generates Windows EXEs and DLLs:
+
+```
+Definition bytes :=
+  makePEfile EXE "winfact.exe" #x"00760000"
+    [::Build_DLLImport "MSVCRT.DLL"
+       [::ImportByName "printf"]]
+    (dd #0)
+    (fun _ imports => main (hd #0 (hd nil imports))).
+```
+
+This handles PE headers, import tables, relocations—everything needed for a
+working executable.
+
+## Multiplication by Constant (Paper Section 4.1)
+
+The paper presents `add_mulc`, a macro that generates shift-and-add sequences
+for constant multiplication. Given `add_mulcFast EDI EDX #160`, it produces:
+
+```
+SHL EDX, 5;;
+ADD EDI, EDX;;
+LEA EDI, [EDI + EDX * 4 + 0]
+```
+
+Crucially, this macro has a *proved specification*:
+
+```
+Lemma add_mulcCorrect nbits : forall (r1 r2: Reg) m,
+  m < 2^nbits ->
+  basic
+    (r1 |-> v ** r2 |-> w ** OSZCP_Any)
+    (add_mulc nbits r1 r2 m)
+    (r1 |-> addB v (mulB w (fromNat m)) ** r2? ** OSZCP_Any).
+```
+
+## Calling Convention Abstraction (Paper Section 4.2)
+
+The paper abstracts over x86 calling conventions (cdecl, stdcall, fastcall)
+with a single `callconv` function that generates both caller and callee code:
+
+```
+let (call, def) := callconv cc (mkFunSig 3 true) in
+def (fun arg1 arg2 arg3 =>
+  MOV EAX, arg1;;
+  ADD EAX, arg2;;
+  ADD EAX, arg3);;
+call MyFunc 2 3 4
+```
+
+The same source expands differently for each convention:
+- *cdecl*: Caller cleans stack (`ADD ESP, 12` after call)
+- *stdcall*: Callee cleans stack (`RET 12`)
+- *fastcall*: First two args in ECX, EDX
+
+## Regular Expression Compiler (Paper Section 4.3)
+
+The most sophisticated example compiles regular expressions to x86 machine code
+by composing with Braibant and Pous's Kleene algebra formalization:
+
+1. Regular expression → DFA (from ATBR library)
+2. DFA → x86 jump table (new compiler)
+
+The compiler has a *certified correctness theorem*:
+
+```
+Lemma DFA_to_x86_correct (w: seq DWORD) :
+  (* If it's safe to jump to acc when DFA accepts... *)
+  (* and safe to jump to rej when DFA rejects... *)
+  (* then it's safe to run the compiled code *)
+```
+
+This demonstrates *horizontal composition* of verified DSL compilers—a key
+benefit of working within a proof assistant.
+
+## Key Insight: Macros as Verified Abstractions
+
+From the paper: "Such definitions really shine when proving correctness of
+machine code programs using our separation logic framework, as we can give
+derived Hoare-style proof rules for the macros."
+
+The assembler isn't just about generating bytes—it's about building *verified
+building blocks* that compose with proofs.
+
 # Quick Start
 
 ## Installation
