@@ -607,89 +607,81 @@ A program is a list of labeled instructions:
 #check Program
 ```
 
-# Examples
+# Examples with `x86!` Macro
 
-## Factorial
+The best way to write assembly is with the `x86!` macro, which provides
+Intel-style syntax that looks like a `.s` file.
 
-Computes n! for input n in ECX, result in EAX:
+## Setup: Register Arguments
 
-```lean
-def factorialExample : Program := ProgBuilder.buildProg do
-  -- EAX := 1 (accumulator)
-  ProgBuilder.emit (Instr.MOVOP OpSize.Op32 (DstSrc.RI EAX 1))
-  -- while ECX != 0
-  X86.«while»
-    (ProgBuilder.emit (Instr.TESTOP OpSize.Op32 (RegMem.R ECX) (RegImm.R ECX)))
-    Condition.Z false
-    (do
-      -- EAX := EAX * ECX
-      ProgBuilder.emit (Instr.IMUL EAX (RegMem.R ECX))
-      -- ECX--
-      ProgBuilder.emit (Instr.UOP OpSize.Op32 UnaryOp.DEC (RegMem.R ECX)))
-```
-
-## Assembly Output
-
-```lean
-#eval! do
-  match assemble 0x1000 factorialExample with
-  | .ok bytes => IO.println s!"Assembled {bytes.length} bytes"
-  | .error _ => IO.println "Assembly failed"
-```
-
-## Sum Array
-
-Sum elements of an array (ESI = pointer, ECX = count, result in EAX):
-
-```lean
-def sumArrayExample : Program := ProgBuilder.buildProg do
-  -- EAX := 0
-  ProgBuilder.emit (Instr.BOP OpSize.Op32 BinOp.XOR (DstSrc.RR EAX EAX))
-  X86.«while»
-    (ProgBuilder.emit (Instr.TESTOP OpSize.Op32 (RegMem.R ECX) (RegImm.R ECX)))
-    Condition.Z false
-    (do
-      -- EAX += [ESI]
-      ProgBuilder.emit (Instr.BOP OpSize.Op32 BinOp.ADD
-        (DstSrc.RM EAX (MemSpec.reg ESI)))
-      -- ESI += 4
-      ProgBuilder.emit (Instr.BOP OpSize.Op32 BinOp.ADD (DstSrc.RI ESI 4))
-      -- ECX--
-      ProgBuilder.emit (Instr.UOP OpSize.Op32 UnaryOp.DEC (RegMem.R ECX)))
-```
-
-# Inline Assembly Syntax
-
-The `x86!` macro provides Intel-style assembly syntax that looks like
-code you'd copy from a `.s` file.
-
-## The `x86!` Macro
-
-Write assembly programs using familiar mnemonics:
+First, define register operands for the macro:
 
 ```
--- Using the x86! macro (defined in CoqToLeanAsm.Syntax)
-def nopProgram : Program := x86! {
-  nop
-  nop
-  ret
-}
+open X86.Examples  -- provides eax, ebx, ecx, edx, imm
 ```
 
-## Register Arguments
-
-Define register arguments for use in the macro:
+Or define them yourself:
 
 ```
--- Register helpers in X86.Examples
-def r_eax : InstrArg := .Reg32 EAX
-def r_ebx : InstrArg := .Reg32 EBX
+def eax : InstrArg := .Reg32 EAX
 def imm (n : Nat) : InstrArg := .Imm32 (BitVec.ofNat 32 n)
 ```
 
-## Supported Instructions
+## Your First Program
 
-The syntax supports common x86 instructions:
+A simple NOP sled with return:
+
+```
+def helloAsm : Program := x86! {
+  nop           -- 0x90
+  nop
+  ret           -- 0xC3
+}
+```
+
+## Register Operations
+
+Clear registers using XOR (standard idiom):
+
+```
+def clearRegs : Program := x86! {
+  xor eax, eax
+  xor ebx, ebx
+}
+```
+
+Arithmetic operations:
+
+```
+def arithmetic : Program := x86! {
+  mov eax, (imm 42)   -- Load immediate
+  add eax, ebx        -- EAX += EBX
+  sub eax, ecx        -- EAX -= ECX
+  shl eax, (imm 2)    -- EAX *= 4
+}
+```
+
+## Stack Operations
+
+Save and restore registers:
+
+```
+def saveRegs : Program := x86! {
+  push eax
+  push ebx
+  push ecx
+  push edx
+}
+
+def restoreRegs : Program := x86! {
+  pop edx   -- Reverse order!
+  pop ecx
+  pop ebx
+  pop eax
+}
+```
+
+## Supported Instructions
 
 - *No-operand*: `nop`, `ret`, `hlt`
 - *One-operand*: `push`, `pop`, `inc`, `dec`, `not`, `neg`, `mul`
@@ -698,37 +690,9 @@ The syntax supports common x86 instructions:
 - *Jumps*: `jmp`, `call`, `jz`, `jnz`, `je`, `jne`, `jl`, `jge`, `jle`,
   `jg`, `jb`, `jae`, `jbe`, `ja`
 
-## Example: Clear Registers
-
-The standard idiom to zero registers:
-
-```
-def clearExample : Program := x86! {
-  xor r_eax, r_eax
-  xor r_ebx, r_ebx
-  xor r_ecx, r_ecx
-  xor r_edx, r_edx
-}
-```
-
-## Example: Stack Frame
-
-Push and pop registers:
-
-```
-def pushRegs : Program := x86! {
-  push r_eax
-  push r_ebx
-  push r_ecx
-  push r_edx
-}
-```
-
 # Executable Verification
 
-The assembler can be verified by running interpreted x86 code.
-The {lean}`X86.Examples.factorialInterpreted` function simulates the x86
-factorial loop and produces correct results:
+Verify correctness by interpreting the assembly logic:
 
 ```lean
 #eval X86.Examples.factorialInterpreted 5   -- 120
@@ -736,7 +700,8 @@ factorial loop and produces correct results:
 #eval X86.Examples.factorialInterpreted 10  -- 3628800
 ```
 
-This demonstrates that the factorial loop logic works correctly.
+The {lean}`X86.Examples.factorialInterpreted` function simulates the x86
+factorial loop and produces correct results.
 
 # References
 
