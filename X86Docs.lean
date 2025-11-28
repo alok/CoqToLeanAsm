@@ -28,8 +28,8 @@ dependent types and tactic system to build a verified x86-32 assembler.
 
 # Overview
 
-This library provides a complete x86-32 macro assembler implemented in Lean 4,
-leveraging dependent types for type-safe instruction encoding and assembly.
+This library provides a complete {deftech}_x86-32 macro assembler_ implemented in Lean 4,
+leveraging dependent types for type-safe {deftech}_instruction encoding_ and assembly.
 
 ## Key Features
 
@@ -37,7 +37,7 @@ The assembler provides:
 
 - *Bit-precise types* using Lean 4's {lean}`BitVec` for {lean}`Byte`, {lean}`Word`, and {lean}`DWord`
 - *Full x86-32 register model* including {lean}`Reg`, {lean}`ByteReg`, and {lean}`SegReg`
-- *Comprehensive instruction encoding* with ModR/M and SIB byte generation
+- *Comprehensive {tech}[instruction encoding]* with {deftech}_ModR/M byte_ and {deftech}_SIB byte_ generation
 - *Separation logic predicates* via {lean}`SPred` for reasoning about memory and registers
 - *Multi-pass assembler* with the {lean}`assemble` function for forward reference resolution
 - *Control flow macros* including {lean}`ifThenElse`, {lean}`X86.while`, and {lean}`proc`
@@ -46,11 +46,11 @@ The assembler provides:
 
 The assembler uses dependent types to ensure correctness:
 
-1. *Type-safe operand sizes*: The {lean}`OpSize` type indexes register and
-   immediate types via {lean}`VWord` and {lean}`VReg`, preventing mismatched operand sizes.
+1. *Type-safe {deftech}_operand sizes_*: The {lean}`OpSize` type indexes register and
+   immediate types via {lean}`VWord` and {lean}`VReg`, preventing mismatched {tech}[operand sizes].
 
-2. *Structured addressing modes*: Memory operands use {lean}`MemSpec`,
-   which captures the full range of x86 addressing: base, index, scale, displacement.
+2. *Structured {deftech}_addressing modes_*: Memory operands use {lean}`MemSpec`,
+   which captures the full range of x86 addressing: base, index, {deftech}_scale factor_, displacement.
 
 3. *Verified encoding*: Each {lean}`Instr` variant maps to exactly one encoding via {lean}`encode`.
 
@@ -154,7 +154,7 @@ The x86-32 architecture has a rich register set modeled with precise Lean types.
 
 ## General Purpose Registers
 
-The eight 32-bit general purpose registers are defined by {lean}`Reg`:
+The eight 32-bit {deftech}_general purpose registers_ (GPRs) are defined by {lean}`Reg`:
 
 ```lean
 #check EAX  -- Accumulator (encoding 0)
@@ -167,7 +167,7 @@ The eight 32-bit general purpose registers are defined by {lean}`Reg`:
 #check EDI  -- Destination Index (encoding 7)
 ```
 
-The {lean}`NonSPReg` type excludes {lean}`ESP`, which cannot be used as an index in SIB addressing.
+The {lean}`NonSPReg` type excludes {lean}`ESP`, which cannot be used as an index in {tech}[SIB byte] addressing.
 
 Each register's encoding is accessed via {lean}`Reg.toNat`:
 
@@ -248,7 +248,7 @@ The x86 instruction set is represented by the {lean}`Instr` inductive type.
 
 ## Memory Addressing
 
-x86's complex addressing modes are captured by {lean}`MemSpec`:
+x86's complex {tech}[addressing modes] are captured by {lean}`MemSpec`:
 
 ```lean
 -- Register indirect: [EBX]
@@ -267,7 +267,7 @@ x86's complex addressing modes are captured by {lean}`MemSpec`:
 #check MemSpec.regIdxDisp EAX (NonSPReg.ECX) Scale.S4 16
 ```
 
-Scale factors are defined by {lean}`Scale`:
+{tech}[Scale factor]s are defined by {lean}`Scale`:
 - {lean}`Scale.S1` - multiply by 1 (no scaling)
 - {lean}`Scale.S2` - multiply by 2
 - {lean}`Scale.S4` - multiply by 4 (common for 32-bit arrays)
@@ -405,7 +405,7 @@ Conditional jumps use {lean}`Condition` and a polarity flag:
 
 # Encoding
 
-x86 instruction encoding is complex. The {lean}`encode` function handles all details.
+x86 {tech}[instruction encoding] is complex. The {lean}`encode` function handles all details.
 
 ## Instruction Format
 
@@ -415,9 +415,9 @@ A typical x86 instruction:
 [Prefix] Opcode [ModR/M] [SIB] [Displacement] [Immediate]
 ```
 
-## ModR/M Byte
+## {tech}[ModR/M byte]
 
-The ModR/M byte specifies register/memory operands:
+The {tech}[ModR/M byte] specifies register/memory operands:
 
 ```
  7   6   5   4   3   2   1   0
@@ -426,13 +426,13 @@ The ModR/M byte specifies register/memory operands:
 +---+---+---+---+---+---+---+---+
 ```
 
-- *mod* (bits 7-6): Addressing mode (00=mem, 01=mem+disp8, 10=mem+disp32, 11=reg)
+- *mod* (bits 7-6): {tech}[Addressing modes] (00=mem, 01=mem+disp8, 10=mem+disp32, 11=reg)
 - *reg/op* (bits 5-3): Register or opcode extension
 - *r/m* (bits 2-0): Register/memory operand
 
-## SIB Byte
+## {tech}[SIB byte]
 
-When r/m=100 (ESP) with mod≠11, a SIB byte follows:
+When r/m=100 (ESP) with mod≠11, a {tech}[SIB byte] follows:
 
 ```
  7   6   5   4   3   2   1   0
@@ -441,7 +441,7 @@ When r/m=100 (ESP) with mod≠11, a SIB byte follows:
 +---+---+---+---+---+---+---+---+
 ```
 
-This enables `[base + index*scale + disp]` addressing.
+This enables `[base + index*{tech}[scale factor] + disp]` {tech}[addressing modes].
 
 ## Encoding Examples
 
