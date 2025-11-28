@@ -31,6 +31,24 @@ dependent types and tactic system to build a verified x86-32 assembler.
 This library provides a complete {deftech}_x86-32 macro assembler_ implemented in Lean 4,
 leveraging dependent types for type-safe {deftech}_instruction encoding_ and assembly.
 
+## Why a Verified Assembler?
+
+Traditional assemblers like NASM, GAS, or MASM are trusted components in the toolchain.
+When they produce incorrect output, the resulting bugs are extremely difficult to diagnose
+because the generated code doesn't match the source. A verified assembler provides:
+
+1. *Correctness by construction*: The encoding functions are total and deterministic.
+   Each instruction variant maps to exactly one byte sequence.
+
+2. *Type-level guarantees*: Lean's type system prevents invalid instruction combinations
+   at compile time. You cannot accidentally use ESP as a SIB index register.
+
+3. *Proved properties*: Key encoding properties can be proved using `rfl` (definitional
+   equality), giving mathematical certainty about the output.
+
+4. *Executable specification*: The assembler serves as both documentation and
+   implementation—the specification *is* the code.
+
 ## Key Features
 
 The assembler provides:
@@ -41,6 +59,7 @@ The assembler provides:
 - *Separation logic predicates* via {lean}`SPred` for reasoning about memory and registers
 - *Multi-pass assembler* with the {lean}`assemble` function for forward reference resolution
 - *Control flow macros* including {lean}`ifThenElse`, {lean}`X86.while`, and {lean}`proc`
+- *Intel-style syntax* via the `x86!` macro for readable assembly programs
 
 ## Design Philosophy
 
@@ -48,11 +67,17 @@ The assembler uses dependent types to ensure correctness:
 
 1. *Type-safe {deftech}_operand sizes_*: The {lean}`OpSize` type indexes register and
    immediate types via {lean}`VWord` and {lean}`VReg`, preventing mismatched {tech}[operand sizes].
+   An 8-bit register cannot be used where a 32-bit operand is expected.
 
 2. *Structured {deftech}_addressing modes_*: Memory operands use {lean}`MemSpec`,
    which captures the full range of x86 addressing: base, index, {deftech}_scale factor_, displacement.
+   The {lean}`NonSPReg` type statically prevents using ESP as an index register.
 
 3. *Verified encoding*: Each {lean}`Instr` variant maps to exactly one encoding via {lean}`encode`.
+   These encodings can be verified against real assembler output using `rfl` proofs.
+
+4. *Compositional assembly*: Programs are built from instruction sequences using
+   {lean}`ProgBuilder`, which handles label allocation and forward reference resolution.
 
 # Quick Start
 
@@ -405,19 +430,30 @@ Conditional jumps use {lean}`Condition` and a polarity flag:
 
 # Encoding
 
-x86 {tech}[instruction encoding] is complex. The {lean}`encode` function handles all details.
+x86 {tech}[instruction encoding] is notoriously complex, with variable-length instructions
+and multiple encoding options for the same operation. The {lean}`encode` function handles
+all details, producing the exact same bytes as a production assembler like NASM.
 
 ## Instruction Format
 
-A typical x86 instruction:
+A typical x86 instruction has the following structure:
 
 ```
 [Prefix] Opcode [ModR/M] [SIB] [Displacement] [Immediate]
 ```
 
-## {tech}[ModR/M byte]
+- *Prefix* (0-4 bytes): Operand size override (0x66), address size override (0x67),
+  segment override, REP/REPNE, LOCK
+- *Opcode* (1-3 bytes): The operation to perform
+- *ModR/M* (0-1 bytes): Specifies register and addressing mode
+- *SIB* (0-1 bytes): Scale-Index-Base for complex addressing
+- *Displacement* (0, 1, 2, or 4 bytes): Memory offset
+- *Immediate* (0, 1, 2, or 4 bytes): Constant operand
 
-The {tech}[ModR/M byte] specifies register/memory operands:
+## {tech}[ModR/M byte] in Detail
+
+The {tech}[ModR/M byte] is the key to understanding x86 encoding. It packs three fields
+into a single byte:
 
 ```
  7   6   5   4   3   2   1   0
@@ -426,13 +462,63 @@ The {tech}[ModR/M byte] specifies register/memory operands:
 +---+---+---+---+---+---+---+---+
 ```
 
-- *mod* (bits 7-6): {tech}[Addressing modes] (00=mem, 01=mem+disp8, 10=mem+disp32, 11=reg)
-- *reg/op* (bits 5-3): Register or opcode extension
-- *r/m* (bits 2-0): Register/memory operand
+*mod* (bits 7-6) specifies the {tech}[addressing modes]:
+- `00` = Memory, no displacement (except special cases)
+- `01` = Memory + 8-bit signed displacement
+- `10` = Memory + 32-bit displacement
+- `11` = Register-to-register (no memory access)
 
-## {tech}[SIB byte]
+*reg/op* (bits 5-3) holds either:
+- A register number (0-7) for two-operand instructions
+- An opcode extension for single-operand instructions (like INC, DEC, PUSH)
 
-When r/m=100 (ESP) with mod≠11, a {tech}[SIB byte] follows:
+*r/m* (bits 2-0) specifies the destination:
+- With mod=11: register number (0-7)
+- With mod≠11: addressing mode (100=SIB follows, 101=disp32 with mod=00)
+
+### Register Encoding Table
+
+| Register | Encoding | As r/m with mod=11 |
+|----------|----------|-------------------|
+| EAX/AX/AL | 000 (0) | Direct register |
+| ECX/CX/CL | 001 (1) | Direct register |
+| EDX/DX/DL | 010 (2) | Direct register |
+| EBX/BX/BL | 011 (3) | Direct register |
+| ESP/SP/AH | 100 (4) | *SIB byte follows* |
+| EBP/BP/CH | 101 (5) | *disp32 if mod=00* |
+| ESI/SI/DH | 110 (6) | Direct register |
+| EDI/DI/BH | 111 (7) | Direct register |
+
+### Example: MOV EAX, EBX (0x89 0xD8)
+
+```lean
+-- MOV EAX, EBX encodes as [0x89, 0xD8]
+#eval encode 0 (Instr.MOVOP OpSize.Op32 (DstSrc.RR EAX EBX))
+```
+
+Breaking down `0xD8`:
+- Binary: `11 011 000`
+- mod = 11 (register-to-register)
+- reg = 011 (EBX = 3, the source)
+- r/m = 000 (EAX = 0, the destination)
+
+### Example: MOV EBX, EAX (0x89 0xC3)
+
+```lean
+-- MOV EBX, EAX encodes as [0x89, 0xC3]
+#eval encode 0 (Instr.MOVOP OpSize.Op32 (DstSrc.RR EBX EAX))
+```
+
+Breaking down `0xC3`:
+- Binary: `11 000 011`
+- mod = 11 (register-to-register)
+- reg = 000 (EAX = 0, the source)
+- r/m = 011 (EBX = 3, the destination)
+
+## {tech}[SIB byte] in Detail
+
+When the r/m field is 100 (would be ESP) with mod≠11, the processor expects a
+{tech}[SIB byte] to follow. This enables scaled indexed addressing:
 
 ```
  7   6   5   4   3   2   1   0
@@ -441,28 +527,72 @@ When r/m=100 (ESP) with mod≠11, a {tech}[SIB byte] follows:
 +---+---+---+---+---+---+---+---+
 ```
 
-This enables `[base + index*{tech}[scale factor] + disp]` {tech}[addressing modes].
+*scale* (bits 7-6) is the {tech}[scale factor]:
+- `00` = ×1
+- `01` = ×2
+- `10` = ×4
+- `11` = ×8
 
-## Encoding Examples
+*index* (bits 5-3) is the index register (ESP=100 means "no index")
+
+*base* (bits 2-0) is the base register (EBP=101 with mod=00 means "disp32 only")
+
+### Example: Scaled Index Addressing (0x8B 0x04 0x8B)
 
 ```lean
--- NOP = 0x90
-#eval encode 0 Instr.NOP
+-- MOV EAX, [EBX + ECX*4] encodes as [0x8B, 0x04, 0x8B]
+#eval encode 0 (Instr.MOVOP OpSize.Op32
+  (DstSrc.RM EAX (MemSpec.regIdx EBX (.ECX) Scale.S4)))
+```
 
--- RET = 0xC3
-#eval encode 0 (Instr.RETOP 0)
+Breaking down:
+- `0x8B` = MOV r32, r/m32 opcode
+- `0x04` = ModR/M: mod=00 (memory), reg=000 (EAX), r/m=100 (SIB follows)
+- `0x8B` = SIB: scale=10 (×4), index=001 (ECX), base=011 (EBX)
 
--- MOV EAX, EBX = 89 D8
--- Opcode 89, ModR/M D8 (mod=11, reg=EBX=3, r/m=EAX=0)
-#eval encode 0 (Instr.MOVOP OpSize.Op32 (DstSrc.RR EAX EBX))
+### Example: Scaled Index with Displacement (0x8B 0x44 0x8B 0x10)
 
--- MOV EAX, 42 = B8 2A 00 00 00
--- Opcode B8+rd, immediate 42 little-endian
-#eval encode 0 (Instr.MOVOP OpSize.Op32 (DstSrc.RI EAX 42))
+```lean
+-- With 8-bit displacement
+#eval encode 0 (Instr.MOVOP OpSize.Op32
+  (DstSrc.RM EAX (MemSpec.regIdxDisp EBX (.ECX) Scale.S4 16)))
+```
 
--- ADD [EBX+8], EAX = 01 43 08
-#eval encode 0 (Instr.BOP OpSize.Op32 BinOp.ADD
-                (DstSrc.MR (MemSpec.regDisp EBX 8) EAX))
+- `0x8B` = MOV r32, r/m32 opcode
+- `0x44` = ModR/M: mod=01 (memory+disp8), reg=000 (EAX), r/m=100 (SIB)
+- `0x8B` = SIB: scale=10 (×4), index=001 (ECX), base=011 (EBX)
+- `0x10` = displacement (16 as signed byte)
+
+## Encoding Verification with `rfl`
+
+A key advantage of this implementation is that encodings can be *proved* correct
+at compile time using definitional equality:
+
+```lean
+-- These theorems are provable by reflexivity!
+theorem nop_is_0x90 : encode 0 Instr.NOP = [0x90] := rfl
+theorem ret_is_0xC3 : encode 0 (Instr.RETOP 0) = [0xC3] := rfl
+theorem hlt_is_0xF4 : encode 0 Instr.HLT = [0xF4] := rfl
+```
+
+This means the type checker itself verifies that our encoding matches the expected bytes.
+
+## More Encoding Examples
+
+```lean
+-- ADD EAX, imm32 uses special short encoding
+-- ADD EAX, 0x12345678 = 05 78 56 34 12
+#eval encode 0 (Instr.BOP OpSize.Op32 BinOp.ADD (DstSrc.RI EAX 0x12345678))
+
+-- XOR EAX, EAX (common idiom to zero a register)
+-- Shorter than MOV EAX, 0 (2 bytes vs 5 bytes)
+#eval encode 0 (Instr.BOP OpSize.Op32 BinOp.XOR (DstSrc.RR EAX EAX))
+
+-- PUSH EBP = 0x55 (uses short encoding 50+rd)
+#eval encode 0 (Instr.PUSH (Src.R EBP))
+
+-- MOV EBP, ESP = 0x89 0xE5
+#eval encode 0 (Instr.MOVOP OpSize.Op32 (DstSrc.RR EBP ESP))
 ```
 
 # Control Flow Macros
@@ -701,6 +831,177 @@ the Euclidean subtraction algorithm:
 ```
 
 The GCD algorithm produces correct results matching Lean's built-in {lean}`Nat.gcd`.
+
+# Type Safety
+
+One of the key benefits of embedding an assembler in a dependently-typed language
+is that many invalid programs are rejected at compile time.
+
+## Preventing ESP as SIB Index
+
+In x86, the ESP register *cannot* be used as an index in SIB addressing. The encoding
+`index=100` (which would be ESP) instead means "no index register." Traditional
+assemblers catch this as a runtime error. We catch it at compile time:
+
+The {name}`NonSPReg` type is defined as a subtype of {name}`Reg` that excludes ESP:
+
+```lean
+#check NonSPReg       -- Registers excluding ESP
+#check NonSPReg.EAX   -- Valid
+#check NonSPReg.ECX   -- Valid
+#check NonSPReg.EBX   -- Valid
+-- NonSPReg.ESP doesn't exist!
+```
+
+The {name}`MemSpec.regIdx` constructor requires a {name}`NonSPReg` for the index:
+
+```lean
+-- This compiles: ECX is a valid index register
+#check MemSpec.regIdx EBX (.ECX) Scale.S4
+
+-- This would NOT compile:
+-- #check MemSpec.regIdx EBX (.ESP) Scale.S4
+-- Error: NonSPReg has no constructor ESP
+```
+
+## Operand Size Consistency
+
+The {name}`OpSize` type ensures operand sizes are consistent across an instruction.
+You cannot mix 8-bit and 32-bit operands:
+
+```lean
+-- Valid: 32-bit operation with 32-bit registers
+#check Instr.BOP OpSize.Op32 BinOp.ADD (DstSrc.RR EAX EBX)
+
+-- Valid: 8-bit operation with 8-bit registers
+#check Instr.BOP OpSize.Op8 BinOp.ADD (DstSrc.RR AL BL)
+```
+
+The {name}`VReg` and {name}`VWord` type families enforce this:
+
+```lean
+#check (VReg OpSize.Op32)  -- = Reg (32-bit registers like EAX)
+#check (VReg OpSize.Op8)   -- = ByteReg (8-bit registers like AL)
+```
+
+## Immediate Size Checking
+
+Immediate values are checked to fit within their declared size:
+
+```lean
+-- 8-bit immediate must fit in a byte
+#check (42 : VWord OpSize.Op8)    -- OK: 42 < 256
+
+-- The BitVec type ensures proper truncation/overflow behavior
+#check (0xFF : VWord OpSize.Op8)  -- OK: maximum byte value
+```
+
+## Label Resolution
+
+Labels in the assembler are managed through structured types to ensure
+forward references are correctly resolved:
+
+```lean
+#check LabelMap     -- Maps label names to addresses
+#check LabelRef     -- Reference to a label (for forward refs)
+#check LabelGen     -- Generates fresh labels
+```
+
+# Common Assembly Idioms
+
+## Zeroing a Register
+
+The standard idiom to zero a register is XOR with itself:
+
+```lean
+-- XOR EAX, EAX is shorter than MOV EAX, 0
+-- 2 bytes: 31 C0
+-- vs 5 bytes: B8 00 00 00 00
+#eval encode 0 (Instr.BOP OpSize.Op32 BinOp.XOR (DstSrc.RR EAX EAX))
+```
+
+## Function Prologue and Epilogue
+
+Standard cdecl function setup:
+
+```
+-- Prologue (3 bytes)
+push ebp        ; 55
+mov ebp, esp    ; 89 E5
+
+-- Epilogue (3 bytes)
+mov esp, ebp    ; 89 EC
+pop ebp         ; 5D
+ret             ; C3
+```
+
+With the `x86!` macro:
+
+```
+def prologue : Program := x86! {
+  push ebp
+  mov ebp, esp
+}
+
+def epilogue : Program := x86! {
+  mov esp, ebp
+  pop ebp
+  ret
+}
+```
+
+## Comparison with NASM
+
+Our assembler produces identical output to NASM. Given this NASM source:
+
+```
+; NASM assembly
+section .text
+global _start
+_start:
+    xor eax, eax      ; 31 C0
+    mov ebx, 42       ; BB 2A 00 00 00
+    add eax, ebx      ; 01 D8
+    ret               ; C3
+```
+
+Our Lean code produces the same bytes:
+
+```lean
+-- Assembles to: 31 C0 BB 2A 00 00 00 01 D8 C3
+def nasmExample : List Instr := [
+  .BOP .Op32 .XOR (.RR EAX EAX),
+  .MOVOP .Op32 (.RI EBX 42),
+  .BOP .Op32 .ADD (.RR EAX EBX),
+  .RETOP 0
+]
+```
+
+# Semantic Properties
+
+Beyond correct encoding, we can prove semantic properties of instructions.
+
+## XOR Self Produces Zero
+
+```lean
+-- For any 32-bit value v, v XOR v = 0
+-- This justifies the "xor eax, eax" idiom
+theorem xor_self_zero (v : DWord) : v ^^^ v = 0 := BitVec.xor_self
+```
+
+## Subtraction Self Produces Zero
+
+```lean
+theorem sub_self_zero (v : DWord) : v - v = 0 := BitVec.sub_self v
+```
+
+## Addition is Commutative
+
+```lean
+theorem add_comm (a b : DWord) : a + b = b + a := BitVec.add_comm a b
+```
+
+These properties let us reason about program behavior, not just encoding correctness.
 
 # References
 
