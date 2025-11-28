@@ -132,16 +132,18 @@ infixl:65 " ## " => BitVec.append
 def bytesToHexString (bs : List Byte) : String :=
   " ".intercalate (bs.map Byte.toHex)
 
--- Theorems about bit operations
+-- Roundtrip theorems: extracting bytes and reassembling preserves the value.
+-- These require proving: (d % 256) | ((d >>> 8) % 256) << 8 | ... = d
+-- i.e., each 8-bit lane is independent and the OR reconstructs the original.
 theorem DWord.fromBytes_toByte (d : DWord) :
     DWord.fromBytes (d.toByte ⟨0, by omega⟩) (d.toByte ⟨1, by omega⟩)
                     (d.toByte ⟨2, by omega⟩) (d.toByte ⟨3, by omega⟩) = d := by
   simp only [DWord.fromBytes, DWord.toByte]
-  sorry -- Full proof requires bitvector automation
+  sorry -- TODO: bit-level extensionality proof
 
 theorem Word.fromBytes_toByte (w : Word) :
     Word.fromBytes (w.toByte ⟨0, by omega⟩) (w.toByte ⟨1, by omega⟩) = w := by
   simp only [Word.fromBytes, Word.toByte]
-  sorry -- Full proof requires bitvector automation
+  sorry -- TODO: bit-level extensionality proof
 
 end X86
